@@ -356,12 +356,17 @@ impl Game<'_> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) enum ExtraButtonKind {
+    Sort(Vec<usize>),
+    DepositMatching,
+    DepositAll,
+    RestockAll,
+}
+
 impl Game<'_> {
-    /// The sort buttons of the open screen, with the extra on: their
-    /// corner (from the screen's) and the slots each sorts. The container's
-    /// (chest-like ones only) sits by its title, the main inventory's by
-    /// the "Inventory" label's line.
-    fn sort_buttons(&self) -> Vec<((f32, f32), Vec<usize>)> {
+    /// The extra buttons (sort, quick deposit, deposit all, restock all) of the open screen.
+    fn extra_buttons(&self) -> Vec<((f32, f32), ExtraButtonKind)> {
         if !self.settings.extras.sort
             || self.screen != Screen::Inventory
             || self.station.is_some()
@@ -390,16 +395,34 @@ impl Game<'_> {
             .filter(|s| (300..500).contains(s))
             .collect();
         if chest_like && !container.is_empty() {
-            buttons.push(((160.0, 5.0), container));
+            buttons.push(((160.0, 5.0), ExtraButtonKind::Sort(container.clone())));
+            buttons.push(((149.0, 5.0), ExtraButtonKind::DepositMatching));
+            buttons.push(((138.0, 5.0), ExtraButtonKind::DepositAll));
+            buttons.push(((127.0, 5.0), ExtraButtonKind::RestockAll));
         }
-        buttons.push(((160.0, self.screen_height() - 95.0), (9..36).collect()));
+        let inv_y = self.screen_height() - 95.0;
+        buttons.push(((160.0, inv_y), ExtraButtonKind::Sort((9..36).collect())));
+        if chest_like && !container.is_empty() {
+            buttons.push(((149.0, inv_y), ExtraButtonKind::DepositMatching));
+        }
         buttons
     }
-    /// The sort buttons: a bordered square with three bars, lighter under
-    /// the cursor.
+
+    /// The sort buttons of the open screen: their corner and the slots each sorts.
+    fn sort_buttons(&self) -> Vec<((f32, f32), Vec<usize>)> {
+        self.extra_buttons()
+            .into_iter()
+            .filter_map(|(pos, kind)| match kind {
+                ExtraButtonKind::Sort(slots) => Some((pos, slots)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The extra buttons: bordered square with distinct icons, lighter under the cursor.
     pub(super) fn draw_sort_buttons(&self, batch: &mut HudBatch, ox: f32, oy: f32) {
         let atlas = &self.gui.atlas;
-        for ((x, y), _) in self.sort_buttons() {
+        for ((x, y), kind) in self.extra_buttons() {
             let (x, y) = (ox + x, oy + y);
             let (cx, cy) = self.cursor;
             let hovered = cx >= x && cx < x + SORT_BUTTON && cy >= y && cy < y + SORT_BUTTON;
@@ -417,13 +440,33 @@ impl Game<'_> {
                 SORT_BUTTON - 2.0,
                 face,
             );
-            for (i, w) in [5.0, 4.0, 3.0].into_iter().enumerate() {
-                let by = y + 2.0 + 2.0 * i as f32;
-                batch.fill(atlas, x + 2.0, by, w, 1.0, rgba(55, 55, 55, 255));
+            let dark = rgba(55, 55, 55, 255);
+            match kind {
+                ExtraButtonKind::Sort(_) => {
+                    for (i, w) in [5.0, 4.0, 3.0].into_iter().enumerate() {
+                        let by = y + 2.0 + 2.0 * i as f32;
+                        batch.fill(atlas, x + 2.0, by, w, 1.0, dark);
+                    }
+                }
+                ExtraButtonKind::DepositMatching => {
+                    batch.fill(atlas, x + 4.0, y + 2.0, 1.0, 5.0, dark);
+                    batch.fill(atlas, x + 2.0, y + 4.0, 5.0, 1.0, dark);
+                }
+                ExtraButtonKind::DepositAll => {
+                    batch.fill(atlas, x + 4.0, y + 2.0, 1.0, 4.0, dark);
+                    batch.fill(atlas, x + 3.0, y + 5.0, 3.0, 1.0, dark);
+                    batch.fill(atlas, x + 4.0, y + 6.0, 1.0, 1.0, dark);
+                }
+                ExtraButtonKind::RestockAll => {
+                    batch.fill(atlas, x + 4.0, y + 2.0, 1.0, 1.0, dark);
+                    batch.fill(atlas, x + 3.0, y + 3.0, 3.0, 1.0, dark);
+                    batch.fill(atlas, x + 4.0, y + 4.0, 1.0, 3.0, dark);
+                }
             }
         }
     }
-    /// A left press on a sort button sorts its slots (true).
+
+    /// A left press on an inventory extra button (sort, deposit, restock).
     pub(super) fn sort_press(&mut self) -> bool {
         let Some(r) = self.renderer.as_ref() else {
             return false;
@@ -431,19 +474,149 @@ impl Game<'_> {
         let batch = HudBatch::new([r.config.width, r.config.height]);
         let (ox, oy) = self.inventory_origin(&batch);
         let (cx, cy) = self.cursor;
-        let hit = self.sort_buttons().into_iter().find(|((x, y), _)| {
+        let hit = self.extra_buttons().into_iter().find(|((x, y), _)| {
             let (x, y) = (ox + x, oy + y);
             cx >= x && cx < x + SORT_BUTTON && cy >= y && cy < y + SORT_BUTTON
         });
-        let Some((_, slots)) = hit else {
+        let Some((_, kind)) = hit else {
             return false;
         };
-        self.sort_slots(&slots);
+        match kind {
+            ExtraButtonKind::Sort(slots) => self.sort_slots(&slots),
+            ExtraButtonKind::DepositMatching => {
+                self.easy_deposit_matching();
+            }
+            ExtraButtonKind::DepositAll => {
+                self.easy_deposit_all();
+            }
+            ExtraButtonKind::RestockAll => {
+                self.easy_restock_all();
+            }
+        }
+        true
+    }
+
+    /// Executes a sequence of slot operations.
+    pub(super) fn tweak_ops(&mut self, ops: &[(Option<usize>, i32, Input)]) -> bool {
+        if ops.is_empty() {
+            return false;
+        }
+        let done = if self.remote.is_some() {
+            self.remote_menu_ops(ops)
+        } else {
+            self.menu_ops(ops)
+        };
+        if done && let Some(key) = self.container {
+            self.container_changed(key);
+        }
+        done
+    }
+
+    /// Deposits all matching items from player inventory (9..36 and 0..9) into the container (300..500).
+    pub(super) fn easy_deposit_matching(&mut self) -> bool {
+        let container_slots: Vec<usize> = self
+            .slots()
+            .into_iter()
+            .filter(|s| (300..500).contains(s))
+            .collect();
+        if container_slots.is_empty() {
+            return false;
+        }
+        let container_items: Vec<ItemStack> = container_slots
+            .iter()
+            .filter_map(|&s| self.slot_view(s))
+            .collect();
+        if container_items.is_empty() {
+            return false;
+        }
+
+        let mut ops = Vec::new();
+        for s in 9..36 {
+            if let Some(held) = self.slot_view(s) {
+                if container_items.iter().any(|c| c.same_item_same_components(&held)) {
+                    ops.push((Some(s), 0, Input::QuickMove));
+                }
+            }
+        }
+        for s in 0..9 {
+            if let Some(held) = self.slot_view(s) {
+                if container_items.iter().any(|c| c.same_item_same_components(&held)) {
+                    ops.push((Some(s), 0, Input::QuickMove));
+                }
+            }
+        }
+        self.tweak_ops(&ops)
+    }
+
+    /// Deposits all non-hotbar items (9..36) from the player inventory into the container.
+    pub(super) fn easy_deposit_all(&mut self) -> bool {
+        let container_slots: Vec<usize> = self
+            .slots()
+            .into_iter()
+            .filter(|s| (300..500).contains(s))
+            .collect();
+        if container_slots.is_empty() {
+            return false;
+        }
+        let mut ops = Vec::new();
+        for s in 9..36 {
+            if self.slot_view(s).is_some() {
+                ops.push((Some(s), 0, Input::QuickMove));
+            }
+        }
+        self.tweak_ops(&ops)
+    }
+
+    /// Takes all items from the container (300..500) into player inventory.
+    pub(super) fn easy_restock_all(&mut self) -> bool {
+        let container_slots: Vec<usize> = self
+            .slots()
+            .into_iter()
+            .filter(|s| (300..500).contains(s))
+            .collect();
+        if container_slots.is_empty() {
+            return false;
+        }
+        let mut ops = Vec::new();
+        for s in container_slots {
+            if self.slot_view(s).is_some() {
+                ops.push((Some(s), 0, Input::QuickMove));
+            }
+        }
+        self.tweak_ops(&ops)
+    }
+
+    /// Quick-moves all stacks of the item in `slot` across between inventory and container.
+    pub(super) fn quick_move_stack_all(&mut self, slot: usize) -> bool {
+        let Some(item) = self.slot_view(slot) else {
+            return false;
+        };
+        if !self.tweak_click(slot, 0, Input::QuickMove) {
+            return false;
+        }
+        if self.remote.is_some() && self.screen != Screen::Creative {
+            self.remote_quick_move_all(slot, &item);
+        } else {
+            self.menu_session(|menu, env, to_menu| {
+                Some(menu.quick_move_all(env, to_menu(slot)?, &item).is_ok())
+            });
+            if self.remote.is_some() {
+                self.send_creative_slots();
+            }
+        }
+        if let Some(key) = self.container {
+            self.container_changed(key);
+        }
         true
     }
     /// The sort key: sorts the part under the cursor (the container when
-    /// the cursor is over no slot).
+    /// the cursor is over no slot). KeyX deposits matching items into container.
     pub(super) fn sort_key_press(&mut self, key: KeyCode) -> bool {
+        if key == KeyCode::KeyX && !self.recipe_search_focused() && self.tweaks_on() {
+            if self.easy_deposit_matching() {
+                return true;
+            }
+        }
         keybinds::key_name(key).is_some_and(|name| self.sort_input(name))
     }
     pub(super) fn sort_mouse_press(&mut self, button: MouseButton) -> bool {
@@ -546,5 +719,12 @@ mod tests {
         ] {
             assert!(!tweak_menu(menu), "{menu}");
         }
+    }
+
+    #[test]
+    fn extra_button_kinds() {
+        use super::ExtraButtonKind;
+        assert_eq!(ExtraButtonKind::DepositMatching, ExtraButtonKind::DepositMatching);
+        assert_ne!(ExtraButtonKind::DepositAll, ExtraButtonKind::RestockAll);
     }
 }

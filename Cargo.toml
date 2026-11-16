@@ -66,8 +66,11 @@ wgpu-hal = { path = "third_party/wgpu-hal" }
 debug = "line-tables-only"
 
 [profile.release]
-lto = "thin"
+opt-level = 3
+lto = "fat"
 codegen-units = 1
+overflow-checks = false
+debug = "line-tables-only"
 
 # Optimized but quick-to-link builds for iteration: cargo build --profile fast
 [profile.fast]
