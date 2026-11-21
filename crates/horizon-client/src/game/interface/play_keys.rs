@@ -126,6 +126,14 @@ impl Game<'_> {
                 if (self.screen == Screen::Inventory
                     || (self.screen == Screen::Creative && !self.creative_screen.tab().search))
                     && self.inventory_hotkey(key) => {}
+            KeyCode::Space
+                if (self.screen == Screen::Inventory
+                    || (self.screen == Screen::Creative && !self.creative_screen.tab().search))
+                    && !self.dialog_open()
+                    && !self.recipe_search_focused()
+                    && !self.station_typing()
+                    && !self.mod_browser_typing()
+                    && self.inventory_hotkey(key) => {}
             // The search tab's number keys (scripted presses; the window's
             // keys reach search_tab_hotbar_key before the search box).
             _ if self.screen == Screen::Creative
