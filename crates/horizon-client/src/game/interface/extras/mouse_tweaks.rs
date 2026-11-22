@@ -375,14 +375,16 @@ mod tests {
 
     #[test]
     fn tweak_drag_cleared_on_space_click_ownership() {
-        let mut tweaks = Tweaks::default();
         // A cursor carrying items initializes an inactive drag on ordinary press
-        tweaks.drag = Some(Drag {
-            right: false,
-            held: Some(ItemStack::new("minecraft:stone", 10)),
-            active: false,
-            visited: vec![10],
-        });
+        let mut tweaks = Tweaks {
+            drag: Some(Drag {
+                right: false,
+                held: Some(ItemStack::new("minecraft:stone", 10)),
+                active: false,
+                visited: vec![10],
+            }),
+            ..Default::default()
+        };
         assert!(tweaks.is_dragging());
 
         // When Space+click takes ownership, the drag must be cleared (tweak_release)
