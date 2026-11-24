@@ -28,12 +28,6 @@ pub(in crate::game) struct Tweaks {
     wheel: f32,
 }
 
-impl Tweaks {
-    #[cfg(test)]
-    pub(in crate::game) fn is_dragging(&self) -> bool {
-        self.drag.is_some()
-    }
-}
 /// A server's menu the tweaks run in: their clicks are vanilla's in these,
 /// and the menu engine knows which slot takes what. Not the menus whose slots
 /// cost or trigger something (anvils, enchanting, merchants, beacons, crafters).
@@ -372,27 +366,6 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tweak_drag_cleared_on_space_click_ownership() {
-        // A cursor carrying items initializes an inactive drag on ordinary press
-        let mut tweaks = Tweaks {
-            drag: Some(Drag {
-                right: false,
-                held: Some(ItemStack::new("minecraft:stone", 10)),
-                active: false,
-                visited: vec![10],
-            }),
-            ..Default::default()
-        };
-        assert!(tweaks.is_dragging());
-
-        // When Space+click takes ownership, the drag must be cleared (tweak_release)
-        // so pointer movement over destination slots before mouse release does not
-        // activate the drag or collect the transferred stack into the cursor.
-        tweaks.drag = None;
-        assert!(!tweaks.is_dragging());
-    }
 
     #[test]
     fn tweak_menu_kinds() {
